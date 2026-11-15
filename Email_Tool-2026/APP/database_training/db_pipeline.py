@@ -200,7 +200,7 @@ def _process_chunk(chunk: pd.DataFrame, chunk_idx: int) -> pd.DataFrame | None:
     return chunk
 
 
-def read_file(file_path: str | Path) -> pd.DataFrame:
+def read_file(file_path: str | Path, emit_fn=None) -> pd.DataFrame:
     """
     Reads a user-uploaded CSV or XLSX file and returns a clean, normalised
     DataFrame with columns: company | first_name | last_name | email.
@@ -225,7 +225,6 @@ def read_file(file_path: str | Path) -> pd.DataFrame:
     if ext == ".csv":
         logger.info("Reading CSV: %s", path.name)
         try:
-            # Try multiple encodings for files saved from Excel
             encodings = ['utf-8', 'utf-16', 'utf-16-le', 'latin-1', 'windows-1252']
             csv_reader = None
             for encoding in encodings:
@@ -234,14 +233,18 @@ def read_file(file_path: str | Path) -> pd.DataFrame:
                     break
                 except (UnicodeDecodeError, UnicodeError):
                     continue
-            
+
             if csv_reader is None:
                 raise ValueError(f"Could not read CSV '{path.name}' with any encoding. Tried: {encodings}")
-            
+
+            rows_done = 0
             for i, chunk in enumerate(csv_reader):
                 processed = _process_chunk(chunk, i)
                 if processed is not None:
                     chunks.append(processed)
+                rows_done += len(chunk)
+                if emit_fn:
+                    _emit(emit_fn, f"PROGRESS {rows_done:,} rows read", "processing")
         except Exception as e:
             raise ValueError(f"Could not read CSV '{path.name}': {e}") from e
 
@@ -251,11 +254,15 @@ def read_file(file_path: str | Path) -> pd.DataFrame:
         try:
             xf = pd.ExcelFile(path, engine=engine)
             sheets = xf.sheet_names[:5]
+            rows_done = 0
             for i, sheet in enumerate(sheets):
                 chunk = xf.parse(sheet, dtype=str)
                 processed = _process_chunk(chunk, i)
                 if processed is not None:
                     chunks.append(processed)
+                rows_done += len(chunk)
+                if emit_fn:
+                    _emit(emit_fn, f"PROGRESS {rows_done:,} rows read", "processing")
         except Exception as e:
             raise ValueError(f"Could not read Excel '{path.name}': {e}") from e
 
@@ -442,7 +449,7 @@ def process_single_file(
     try:
         # Step 1 — Read
         _emit(emit_fn, f"Processing: {input_file.name}")
-        df = read_file(input_file)
+        df = read_file(input_file, emit_fn=emit_fn)
         status["rows_read"] = len(df)
 
         # Step 2 — Extract patterns
@@ -458,7 +465,7 @@ def process_single_file(
             return status
 
         status["rows_extracted"] = len(patterns_df)
-        _emit(emit_fn, f"Found {len(patterns_df):,} new formats", "success")
+        _emit(emit_fn, f"Found {len(patterns_df):,} pattern rows to evaluate", "success")
 
         # Step 3 — Save CSV immediately (before PKL update)
         date_str = datetime.now().strftime("%Y-%m-%d")
@@ -467,20 +474,52 @@ def process_single_file(
         patterns_df.to_csv(csv_path, index=False)
         status["csv_saved"] = str(csv_path)
 
+        # Save invalid rows separately for review in the main database folder
+        invalid_rows_df = df[~df["email"].astype(str).str.lower().isin([e.lower() for e in []])]
+        invalid_csv_dir = Path(output_folder).parent / "main_database"
+        invalid_csv_dir.mkdir(parents=True, exist_ok=True)
+        invalid_csv_name = f"{input_file.stem}_{date_str}_invalid_email_patterns.csv"
+        invalid_csv_path = invalid_csv_dir / invalid_csv_name
+
+        # Build a review file from the original processed dataframe, keeping only rows that were not matched
+        # This is intentionally non-destructive and only for visibility.
+        invalid_rows_df = df.copy()
+        valid_companies = set(patterns_df["company"].astype(str).str.strip().str.lower())
+        invalid_rows_df = invalid_rows_df[
+            ~invalid_rows_df["company"].astype(str).str.strip().str.lower().isin(valid_companies)
+        ]
+        if not invalid_rows_df.empty:
+            invalid_rows_df = invalid_rows_df[[c for c in ["company", "first_name", "last_name", "email"] if c in invalid_rows_df.columns]].copy()
+            invalid_rows_df.to_csv(invalid_csv_path, index=False)
+            status["invalid_csv_saved"] = str(invalid_csv_path)
+            _emit(emit_fn, f"Invalid patterns file saved: {invalid_csv_path.name}", "warning")
+        else:
+            status["invalid_csv_saved"] = None
+
         # Step 4 — Update pickle and capture detailed stats
-        pkl_result = update_pickle(pkl_path, csv_path)
+        pkl_result = update_pickle(pkl_path, csv_path, emit_fn=emit_fn)
         status["pkl_updated"]       = True
         status["new_companies"]     = pkl_result["new"]
         status["updated_companies"] = pkl_result["updated"]
         status["db_total"]          = pkl_result["total"]
 
+        summary_msg = (
+            f"SUMMARY | file: {input_file.name} | rows read: {status['rows_read']:,} | "
+            f"valid patterns found: {status['rows_extracted']:,} | "
+            f"ignored/invalid: {pkl_result.get('invalid_rows', 0):,} | "
+            f"new companies: {pkl_result.get('new', 0):,} | "
+            f"updated companies: {pkl_result.get('updated', 0):,} | "
+            f"unchanged companies: {pkl_result.get('unchanged', 0):,} | "
+            f"final DB total: {pkl_result.get('total', 0):,}"
+        )
+        if status.get("invalid_csv_saved"):
+            summary_msg += f" | invalid review file: {Path(status['invalid_csv_saved']).name}"
+
         logger.info("%s", _SEP)
         logger.info("  OK    %s", input_file.name)
-        logger.info("  rows: %d  |  patterns: %d  |  +new: %d  |  updated: %d  |  db total: %d",
-            status["rows_read"], status["rows_extracted"],
-            pkl_result["new"], pkl_result["updated"], pkl_result["total"])
+        logger.info("  %s", summary_msg)
         logger.info("%s", _SEP)
-        _emit(emit_fn, "Done", "success")
+        _emit(emit_fn, summary_msg, "success")
 
     except (FileNotFoundError, ValueError) as e:
         status["error"] = str(e)
@@ -662,7 +701,7 @@ def _save_pickle(pkl_path: Path, data: dict) -> None:
         pickle.dump(data, f)
 
 
-def update_pickle(pkl_path: str | Path, csv_path: str | Path) -> dict:
+def update_pickle(pkl_path: str | Path, csv_path: str | Path, emit_fn=None) -> dict:
     """
     Reads csv_path (must have 'company' and 'email_pattern' columns) and
     merges its data into the pickle database at pkl_path.
@@ -686,6 +725,7 @@ def update_pickle(pkl_path: str | Path, csv_path: str | Path) -> dict:
     except Exception as e:
         raise ValueError(f"Could not read CSV '{csv_path.name}': {e}") from e
 
+    rows_seen = len(df)
     df.columns = df.columns.str.lower().str.strip()
 
     # Legacy column name support
@@ -706,24 +746,28 @@ def update_pickle(pkl_path: str | Path, csv_path: str | Path) -> dict:
 
     # Drop invalid patterns
     invalid_lower = [p.lower() for p in _INVALID_PATTERNS]
-    df = df[
+    df_valid = df[
         (df["company"] != "") &
         (df["email_pattern"] != "") &
         (~df["email_pattern"].str.lower().isin(invalid_lower))
     ]
+    invalid_rows = rows_seen - len(df_valid)
 
-    if df.empty:
+    if df_valid.empty:
         logger.warning("No valid rows in '%s' — PKL not changed.", csv_path.name)
+        _emit(emit_fn, f"SUMMARY | file: {csv_path.name} | rows seen: {rows_seen:,} | valid rows: 0 | ignored/invalid: {invalid_rows:,} | no PKL change", "warning")
         return _load_pickle(pkl_path)
 
     # Build update dict from CSV
-    new_entries = dict(zip(df["company"], df["email_pattern"]))
+    new_entries = dict(zip(df_valid["company"], df_valid["email_pattern"]))
 
     # Load, merge, fix legacy list values, save
     db = _load_pickle(pkl_path)
     size_before = len(db)
-    truly_new   = sum(1 for k in new_entries if k not in db)
-    updated     = len(new_entries) - truly_new
+    existing_keys = [k for k in new_entries if k in db]
+    truly_new = sum(1 for k in new_entries if k not in db)
+    replaced = sum(1 for k in existing_keys if db.get(k) != new_entries[k])
+    unchanged = sum(1 for k in existing_keys if db.get(k) == new_entries[k])
 
     db.update(new_entries)
     db = {
@@ -732,8 +776,22 @@ def update_pickle(pkl_path: str | Path, csv_path: str | Path) -> dict:
     }
 
     _save_pickle(pkl_path, db)
-    logger.info(
-        "PKL updated: +%d new  |  %d updated  |  total %d  (%s)",
-        truly_new, updated, len(db), pkl_path.name
+    summary_msg = (
+        f"PKL update summary | rows seen: {rows_seen:,} | valid rows: {len(new_entries):,} | "
+        f"ignored/invalid: {invalid_rows:,} | new companies: {truly_new:,} | "
+        f"updated companies: {replaced:,} | unchanged companies: {unchanged:,} | "
+        f"final DB total: {len(db):,}"
     )
-    return {"db": db, "new": truly_new, "updated": updated, "total": len(db), "before": size_before}
+    logger.info(summary_msg)
+    _emit(emit_fn, summary_msg, "success")
+    return {
+        "db": db,
+        "new": truly_new,
+        "updated": replaced,
+        "unchanged": unchanged,
+        "invalid_rows": invalid_rows,
+        "rows_seen": rows_seen,
+        "valid_rows": len(new_entries),
+        "total": len(db),
+        "before": size_before,
+    }

@@ -251,6 +251,8 @@
             forms.forEach(form => form.reset());
         }
 
+        let lastProcessingRow = null;
+
         function updateLog(message, type = 'info') {
             const logSection = document.getElementById('logSection');
             const timestamp = new Date().toLocaleTimeString();
@@ -259,6 +261,21 @@
             else if (type === 'success') { icon = '<i class="bi bi-check-circle"></i> '; colorClass = 'text-success fw-bold'; }
             else if (type === 'error') { icon = '<i class="bi bi-exclamation-triangle"></i> '; colorClass = 'text-danger fw-bold'; }
             else { icon = '<i class="bi bi-info-circle"></i> '; colorClass = 'text-primary'; }
+
+            if (type === 'processing' && message.startsWith('PROGRESS')) {
+                if (!lastProcessingRow) {
+                    lastProcessingRow = document.createElement('p');
+                    lastProcessingRow.className = `${colorClass} mb-1`;
+                    logSection.appendChild(lastProcessingRow);
+                }
+                lastProcessingRow.innerHTML = `[${timestamp}] ${icon}${message}`;
+                logSection.scrollTop = logSection.scrollHeight;
+                return;
+            }
+
+            if (type !== 'processing') {
+                lastProcessingRow = null;
+            }
 
             logSection.innerHTML += `<p class="${colorClass} mb-1">[${timestamp}] ${icon}${message}</p>`;
             logSection.scrollTop = logSection.scrollHeight;
