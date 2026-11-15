@@ -111,7 +111,17 @@ def get_email_formats(file_path):
 
     try:
         if file_path.endswith('.csv'):
-            data = pd.read_csv(file_path)
+            # Try multiple encodings for files saved from Excel
+            encodings = ['utf-8', 'utf-16', 'utf-16-le', 'latin-1', 'windows-1252']
+            data = None
+            for encoding in encodings:
+                try:
+                    data = pd.read_csv(file_path, encoding=encoding)
+                    break
+                except (UnicodeDecodeError, UnicodeError):
+                    continue
+            if data is None:
+                raise ValueError(f"Could not read CSV file. Tried encodings: {encodings}")
 
         elif file_path.endswith(('.xls', '.xlsx')):
             # Load first 5 sheets and combine them
@@ -171,7 +181,7 @@ def process_single_file(input_file, output_folder):
                 print(f"Processed data saved to: {output_file_path}")
 
             except Exception as e:
-                print(f"Error processing file {input_file}: {e}")
+                print(f"email format extracter Error processing file {input_file}: {e}")
         else:
             print(f"Unsupported file type: {file_extension}")
 

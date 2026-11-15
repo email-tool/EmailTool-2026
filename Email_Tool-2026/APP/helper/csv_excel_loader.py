@@ -7,7 +7,17 @@ def file_load(file_path):
     
     # Load the data
     if file_extension == ".csv":
-        data = pd.read_csv(file_path)
+        # Try multiple encodings for files saved from Excel
+        encodings = ['utf-8', 'utf-16', 'utf-16-le', 'latin-1', 'windows-1252']
+        data = None
+        for encoding in encodings:
+            try:
+                data = pd.read_csv(file_path, encoding=encoding)
+                break
+            except (UnicodeDecodeError, UnicodeError):
+                continue
+        if data is None:
+            raise ValueError(f"Could not read CSV file. Tried encodings: {encodings}")
     elif file_extension in [".xls", ".xlsx"]:
         # Read up to 5 sheets and append data into one DataFrame
         excel_data = pd.ExcelFile(file_path)

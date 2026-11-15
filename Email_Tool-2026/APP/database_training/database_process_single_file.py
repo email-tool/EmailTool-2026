@@ -35,7 +35,7 @@ def process_single_file(input_file, output_folder,output_pkl_path):
                 update_pkl_with_csv(output_file_path, output_pkl_path)
 
             except Exception as e:
-                print(f"Error processing file database procress  {input_file}: {e}")
+                print(f"database process Error processing file database procress  {input_file}: {e}")
         else:
             print(f"Unsupported file type: {file_extension}")
 

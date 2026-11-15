@@ -10,6 +10,17 @@ uploads/
 files/
 track_automation/
 old_database_files/
+Email_Tool-2026/APP/files/
+Email_Tool-2026/APP/outputs/
+Email_Tool-2026/APP/uploads/
+Email_Tool-2026/APP/*.csv
+Email_Tool-2026/APP/*.txt
+Email_Tool-2026/APP/*.pkl
+Email_Tool-2026/email-generator/uploads/
+Email_Tool-2026/email-generator/*.csv
+Email_Tool-2026/*.csv
+Email_Tool-2026/*.txt
+Email_Tool-2026/*.pkl
 # Optional: ignore Python junk
 __pycache__/
 *.pyc

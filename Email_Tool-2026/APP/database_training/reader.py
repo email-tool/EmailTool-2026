@@ -55,7 +55,17 @@ def process_file(file_path, chunk_size=50000):
     # Process CSV in chunks
     if file_extension == ".csv":
         print ("FIle is CSV")
-        chunk_iterator = pd.read_csv(file_path, chunksize=chunk_size, low_memory=False)
+        # Try multiple encodings for files saved from Excel
+        encodings = ['utf-8', 'utf-16', 'utf-16-le', 'latin-1', 'windows-1252']
+        chunk_iterator = None
+        for encoding in encodings:
+            try:
+                chunk_iterator = pd.read_csv(file_path, encoding=encoding, chunksize=chunk_size, low_memory=False)
+                break
+            except (UnicodeDecodeError, UnicodeError):
+                continue
+        if chunk_iterator is None:
+            raise ValueError(f"Could not read CSV file. Tried encodings: {encodings}")
         for i, chunk in enumerate(chunk_iterator):
             processed_chunk = process_chunk(chunk, i)
             if processed_chunk is not None:
@@ -91,5 +101,5 @@ def reader(file_path):
         print("✅ Final processed DataFrame shape:", processed_data.shape)
         return processed_data
     except Exception as e:
-        print(f"🚨 Error processing file {file_path}: {e}")
+        print(f"🚨 Reader Error processing file {file_path}: {e}")
         return pd.DataFrame()  # Return empty DataFrame instead of failing

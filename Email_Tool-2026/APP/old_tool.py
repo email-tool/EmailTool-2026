@@ -80,7 +80,7 @@ def upload_file():
             
             log_message = "File processed successfully!"
         except Exception as e:
-            log_message = f"Error processing file: {str(e)}"
+            log_message = f"old tool Error processing file: {str(e)}"
 
         
 
@@ -151,7 +151,7 @@ def update_file():
 
             log_message = "File processed successfully! Rows:, Columns:"
         except Exception as e:
-            log_message = f"Error processing file: {str(e)}"
+            log_message = f"old tool Error processing file: {str(e)}"
         return jsonify({"log": log_message})
 
 
@@ -173,7 +173,7 @@ def update_file():
                     log_message = "File processed successfully! Rows:, Columns:"
                     log_message = "File processed successfully!"
             except Exception as e:
-                log_message = f"Error processing file: {str(e)}"
+                log_message = f"old tool Error processing file: {str(e)}"
         print("log", log_message)
     
 

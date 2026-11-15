@@ -225,7 +225,20 @@ def read_file(file_path: str | Path) -> pd.DataFrame:
     if ext == ".csv":
         logger.info("Reading CSV: %s", path.name)
         try:
-            for i, chunk in enumerate(pd.read_csv(path, chunksize=_CHUNK_SIZE, low_memory=False, dtype=str)):
+            # Try multiple encodings for files saved from Excel
+            encodings = ['utf-8', 'utf-16', 'utf-16-le', 'latin-1', 'windows-1252']
+            csv_reader = None
+            for encoding in encodings:
+                try:
+                    csv_reader = pd.read_csv(path, encoding=encoding, chunksize=_CHUNK_SIZE, low_memory=False, dtype=str)
+                    break
+                except (UnicodeDecodeError, UnicodeError):
+                    continue
+            
+            if csv_reader is None:
+                raise ValueError(f"Could not read CSV '{path.name}' with any encoding. Tried: {encodings}")
+            
+            for i, chunk in enumerate(csv_reader):
                 processed = _process_chunk(chunk, i)
                 if processed is not None:
                     chunks.append(processed)

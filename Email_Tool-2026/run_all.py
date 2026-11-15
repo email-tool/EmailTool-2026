@@ -12,12 +12,42 @@ DJANGO_REQUIREMENTS = os.path.join(DJANGO_DIR, "requirements.txt")
 # -------------------------
 # INSTALL REQUIREMENTS
 # -------------------------
+# def install_requirements(req_file):
+    # if os.path.exists(req_file):
+    #     print(f"📦 Installing requirements from {req_file} ...")
+    #     subprocess.check_call([
+    #         sys.executable, "-m", "pip", "install", "-r", req_file
+    #     ])
+    # else:
+    #     print(f"⚠️ requirements.txt not found at {req_file}")
+
+
+
 def install_requirements(req_file):
     if os.path.exists(req_file):
-        print(f"📦 Installing requirements from {req_file} ...")
-        subprocess.check_call([
-            sys.executable, "-m", "pip", "install", "-r", req_file
-        ])
+        print(f"📦 Installing requirements from {req_file}...")
+
+        try:
+            subprocess.check_call(
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
+                    "-r",
+                    req_file,
+                    "--quiet",          # less pip output
+                    "--disable-pip-version-check",
+                    "--no-input"        # non-interactive
+                ],
+                stdout=subprocess.DEVNULL,   # hide stdout
+                stderr=subprocess.DEVNULL    # hide stderr
+            )
+            print("✅ Requirements installed successfully")
+
+        except subprocess.CalledProcessError:
+            print("❌ Failed to install requirements")
+
     else:
         print(f"⚠️ requirements.txt not found at {req_file}")
 

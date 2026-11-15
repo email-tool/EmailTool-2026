@@ -53,7 +53,7 @@ def create_emails2(row, email_patterns):
         email_pattern = normalize_pattern(email_pattern)
 
     except Exception as e:
-        print(f"Error processing file: {formats} ----- {str(e)}")
+        # print(f"create email Error processing file: {row, email_patterns} ----- {str(e)}")
         return None
 
     # Define patterns

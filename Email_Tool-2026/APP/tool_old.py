@@ -304,7 +304,7 @@ def upload_file():
             process_single_file(file_path, Output_files_path_old, old_db_pickle_file_path)
             log_message = "File processed successfully!"
         except Exception as e:
-            log_message = f"Error processing file: {str(e)}"
+            log_message = f"tool old Error processing file: {str(e)}"
 
     if 'folder' in request.files:
         print("folder is selected")
