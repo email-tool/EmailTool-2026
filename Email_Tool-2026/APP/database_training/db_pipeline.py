@@ -112,6 +112,81 @@ _MANDATORY = ["company", "first_name", "last_name", "email"]
 _CHUNK_SIZE = 50_000
 
 
+class _InputCheckSummary:
+    def __init__(self):
+        self.rows = 0
+        self.company_values = set()
+        self.missing_company = 0
+        self.missing_contact = 0
+        self.missing_email = 0
+        self.email_without_at = 0
+        self.complete_rows = 0
+        self.has_company_column = False
+        self.has_contact_column = False
+        self.has_email_column = False
+
+    @staticmethod
+    def _present(df: pd.DataFrame, column: str) -> pd.Series:
+        if column not in df.columns:
+            return pd.Series(False, index=df.index)
+        return df[column].fillna("").astype(str).str.strip().ne("")
+
+    def add(self, df: pd.DataFrame) -> None:
+        self.rows += len(df)
+        company_present = self._present(df, "company")
+        first_present = self._present(df, "first_name")
+        last_present = self._present(df, "last_name")
+        email_present = self._present(df, "email")
+        contact_present = first_present & last_present
+        email_values = df["email"].fillna("").astype(str).str.strip() if "email" in df else pd.Series("", index=df.index)
+
+        self.missing_company += int((~company_present).sum())
+        self.missing_contact += int((~contact_present).sum())
+        self.missing_email += int((~email_present).sum())
+        self.email_without_at += int((email_present & ~email_values.str.contains("@", regex=False)).sum())
+        self.complete_rows += int((company_present & contact_present & email_present).sum())
+        self.has_company_column |= "company" in df.columns
+        self.has_contact_column |= "contact_name" in df.columns or (
+            "first_name" in df.columns and "last_name" in df.columns
+        )
+        self.has_email_column |= "email" in df.columns
+
+        if "company" in df.columns:
+            normalized = df.loc[company_present, "company"].astype(str).str.strip().str.casefold()
+            self.company_values.update(normalized[normalized.ne("")].unique())
+
+    def as_dict(self) -> dict:
+        return {
+            "rows": self.rows,
+            "unique_companies": len(self.company_values),
+            "missing_company": self.missing_company,
+            "missing_contact": self.missing_contact,
+            "missing_email": self.missing_email,
+            "email_without_at": self.email_without_at,
+            "complete_rows": self.complete_rows,
+            "has_company_column": self.has_company_column,
+            "has_contact_column": self.has_contact_column,
+            "has_email_column": self.has_email_column,
+        }
+
+
+def _input_check_message(summary: dict) -> str:
+    columns = (
+        f"company={'found' if summary['has_company_column'] else 'missing'}, "
+        f"contact={'found' if summary['has_contact_column'] else 'missing'}, "
+        f"email={'found' if summary['has_email_column'] else 'missing'}"
+    )
+    return (
+        f"FILE CHECK | total rows: {summary['rows']:,} | "
+        f"unique companies: {summary['unique_companies']:,} | "
+        f"rows with company/contact/email: {summary['complete_rows']:,} | "
+        f"missing company: {summary['missing_company']:,} | "
+        f"missing contact name: {summary['missing_contact']:,} | "
+        f"missing email: {summary['missing_email']:,} | "
+        f"email without @: {summary['email_without_at']:,} | columns: {columns}"
+    )
+
+
 def _normalise_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Renames DataFrame columns to internal standard names via column_map."""
     rename_map = {}
@@ -221,6 +296,7 @@ def read_file(file_path: str | Path, emit_fn=None) -> pd.DataFrame:
 
     ext = path.suffix.lower()
     chunks: list[pd.DataFrame] = []
+    input_checks = _InputCheckSummary()
 
     if ext == ".csv":
         logger.info("Reading CSV: %s", path.name)
@@ -239,6 +315,7 @@ def read_file(file_path: str | Path, emit_fn=None) -> pd.DataFrame:
 
             rows_done = 0
             for i, chunk in enumerate(csv_reader):
+                input_checks.add(_split_contact_name(_normalise_columns(chunk)))
                 processed = _process_chunk(chunk, i)
                 if processed is not None:
                     chunks.append(processed)
@@ -257,6 +334,7 @@ def read_file(file_path: str | Path, emit_fn=None) -> pd.DataFrame:
             rows_done = 0
             for i, sheet in enumerate(sheets):
                 chunk = xf.parse(sheet, dtype=str)
+                input_checks.add(_split_contact_name(_normalise_columns(chunk)))
                 processed = _process_chunk(chunk, i)
                 if processed is not None:
                     chunks.append(processed)
@@ -272,6 +350,11 @@ def read_file(file_path: str | Path, emit_fn=None) -> pd.DataFrame:
             f"Only .csv, .xls, and .xlsx are accepted."
         )
 
+    check_summary = input_checks.as_dict()
+    check_message = _input_check_message(check_summary)
+    logger.info("%s", check_message)
+    _emit(emit_fn, check_message, "info")
+
     if not chunks:
         raise ValueError(
             f"No usable data found in '{path.name}'. "
@@ -282,6 +365,7 @@ def read_file(file_path: str | Path, emit_fn=None) -> pd.DataFrame:
 
     # Final mandatory column check on the merged result
     _check_mandatory(df)
+    df.attrs["input_check_summary"] = check_summary
 
     logger.info("Read '%s' → %d rows", path.name, len(df))
     return df
