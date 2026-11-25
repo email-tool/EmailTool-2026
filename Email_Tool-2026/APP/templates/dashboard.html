@@ -54,6 +54,14 @@
             border-radius: 8px;
             margin-bottom: 20px;
         }
+        .database-patterns-table { min-width: 720px; }
+        .email-pattern-cell { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 34rem; }
+        .database-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+        .database-history-panel { border-top: 1px solid #dee2e6; padding-top: 1rem; }
+        .database-history-list { max-height: 360px; overflow-y: auto; }
+        @media (min-width: 1200px) {
+            .database-history-panel { border-top: 0; border-left: 1px solid #dee2e6; padding: 0 0 0 1.25rem; }
+        }
     </style>
 </head>
 
@@ -151,18 +159,62 @@
                 <!-- Database View with Full Browser -->
                 <div id="database-view" class="section">
                     <div class="section-header"><h3>New - Database View</h3></div>
-                    <!-- Company Count -->
-                    <div class="row text-center">
-                    <div class="col-md-6">
-                        <div class="db-count-card">
-                            <div class="db-count-number" id="companyCountMain">Loading...</div>
-
+                    <div class="row g-4 align-items-start">
+                        <div class="col-xl-8">
+                            <h4><i class="bi bi-envelope-at"></i> Company Email Patterns</h4>
+                            <form class="row g-2 mb-3" onsubmit="event.preventDefault(); loadDatabaseEntries(1)">
+                                <div class="col">
+                                    <input id="databaseSearchInput" class="form-control" type="search"
+                                           placeholder="Search company prefix" aria-label="Search company prefix">
+                                </div>
+                                <div class="col-auto">
+                                    <button class="btn btn-primary" type="submit" title="Search companies">
+                                        <i class="bi bi-search"></i> Search
+                                    </button>
+                                    <button class="btn btn-outline-secondary" type="button" title="Clear search"
+                                            onclick="document.getElementById('databaseSearchInput').value = ''; loadDatabaseEntries(1)">
+                                        Clear
+                                    </button>
+                                </div>
+                            </form>
+                            <div class="table-responsive border rounded bg-white">
+                                <table class="table table-sm table-striped table-hover align-middle mb-0 database-patterns-table">
+                                    <thead class="table-light">
+                                        <tr><th scope="col">Company</th><th scope="col">Email format</th></tr>
+                                    </thead>
+                                    <tbody id="databaseTableBody">
+                                        <tr><td colspan="2" class="text-muted">Open Database View to load entries.</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="database-pagination py-2">
+                                <span id="databasePaginationInfo" class="small text-muted">Loading...</span>
+                                <div class="btn-group" role="group" aria-label="Database pages">
+                                    <button id="databasePreviousPage" class="btn btn-outline-secondary btn-sm" type="button"
+                                            title="Previous page" onclick="loadDatabaseEntries(databasePage - 1)" disabled>
+                                        <i class="bi bi-chevron-left"></i>
+                                    </button>
+                                    <button id="databaseNextPage" class="btn btn-outline-secondary btn-sm" type="button"
+                                            title="Next page" onclick="loadDatabaseEntries(databasePage + 1)" disabled>
+                                        <i class="bi bi-chevron-right"></i>
+                                    </button>
+                                </div>
+                            </div>
                         </div>
+                        <aside class="col-xl-4 database-history-panel" aria-labelledby="databaseHistoryHeading">
+                            <h5 id="databaseHistoryHeading"><i class="bi bi-clock-history"></i> Count History</h5>
+                            <dl class="row mb-2">
+                                <dt class="col-7">Previous count</dt><dd class="col-5 text-end" id="databasePreviousCount">Loading...</dd>
+                                <dt class="col-7">Current count</dt><dd class="col-5 text-end fw-bold" id="databaseCurrentCount">Loading...</dd>
+                                <dt class="col-7">Change</dt><dd class="col-5 text-end" id="databaseCountChange">Loading...</dd>
+                            </dl>
+                            <p class="small text-muted mb-2">Last update: <span id="databaseLastUpdated">Loading...</span></p>
+                            <h6>Recent snapshots</h6>
+                            <ul id="databaseCountHistoryList" class="list-group list-group-flush database-history-list">
+                                <li class="list-group-item px-0 text-muted">Loading history...</li>
+                            </ul>
+                        </aside>
                     </div>
-
-                </div>
-
-
 
                     <!-- Breadcrumb Navigation -->
                     <div class="breadcrumb-trail">
@@ -286,32 +338,126 @@
             document.getElementById('log_output').innerText = '';
         }
 
+        let databasePage = 1;
+
         function loadDatabaseInfo(path = '/') {
             currentPath = path;
             document.getElementById('currentPathDisplay').textContent = '/files' + path;
-            loadDatabaseCount();
+            loadDatabaseHistory();
+            loadDatabaseEntries(1);
             loadFileList(path);
         }
 
-    function loadDatabaseCount() {
-        fetch('/database-counts')
-            .then(r => r.json())
-            .then(data => {
-                if (data.error) {
-                    document.getElementById('companyCountMain').textContent = 'Error';
-                    document.getElementById('companyCountSecondary').textContent = 'Error';
-                    return;
-                }
+        function loadDatabaseHistory() {
+            fetch('/database-count-history?limit=12')
+                .then(async response => {
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error || 'Could not load count history');
+                    return data;
+                })
+                .then(data => {
+                    document.getElementById('databasePreviousCount').textContent = data.previous_count === null
+                        ? 'No earlier snapshot' : Number(data.previous_count).toLocaleString();
+                    document.getElementById('databaseCurrentCount').textContent = Number(data.current_count).toLocaleString();
+                    document.getElementById('databaseCountChange').textContent = data.change === null
+                        ? '—' : `${data.change > 0 ? '+' : ''}${Number(data.change).toLocaleString()}`;
+                    document.getElementById('databaseLastUpdated').textContent = data.last_updated
+                        ? new Date(data.last_updated).toLocaleString() : 'No updates recorded';
 
-                document.getElementById('companyCountMain').textContent =
-                    data.main_db.toLocaleString();
+                    const historyList = document.getElementById('databaseCountHistoryList');
+                    historyList.replaceChildren();
+                    data.records.forEach(record => {
+                        const item = document.createElement('li');
+                        item.className = 'list-group-item px-0';
+                        const summary = document.createElement('div');
+                        summary.className = 'd-flex justify-content-between gap-2';
+                        const event = document.createElement('span');
+                        event.textContent = record.event || 'Database update';
+                        const count = document.createElement('strong');
+                        count.textContent = Number(record.count).toLocaleString();
+                        summary.append(event, count);
+                        item.appendChild(summary);
+                        const timestamp = document.createElement('small');
+                        timestamp.className = 'text-muted';
+                        timestamp.textContent = new Date(record.timestamp).toLocaleString();
+                        item.appendChild(timestamp);
+                        if (record.source) {
+                            const source = document.createElement('div');
+                            source.className = 'small text-muted text-break';
+                            source.textContent = record.source;
+                            item.appendChild(source);
+                        }
+                        historyList.appendChild(item);
+                    });
+                    if (data.records.length === 0) {
+                        const item = document.createElement('li');
+                        item.className = 'list-group-item px-0 text-muted';
+                        item.textContent = 'No snapshots recorded.';
+                        historyList.appendChild(item);
+                    }
+                })
+                .catch(error => {
+                    document.getElementById('databasePreviousCount').textContent = 'Unavailable';
+                    document.getElementById('databaseCurrentCount').textContent = 'Unavailable';
+                    document.getElementById('databaseCountChange').textContent = 'Unavailable';
+                    document.getElementById('databaseLastUpdated').textContent = error.message;
+                });
+        }
 
-            })
-            .catch(() => {
-                document.getElementById('companyCountMain').textContent = 'Failed';
-                document.getElementById('companyCountSecondary').textContent = 'Failed';
-            });
-    }
+        function setDatabaseTableMessage(message, className = 'text-muted') {
+            const body = document.getElementById('databaseTableBody');
+            const row = document.createElement('tr');
+            const cell = document.createElement('td');
+            cell.colSpan = 2;
+            cell.className = className;
+            cell.textContent = message;
+            row.appendChild(cell);
+            body.replaceChildren(row);
+        }
+
+        function loadDatabaseEntries(page = databasePage) {
+            const body = document.getElementById('databaseTableBody');
+            const search = document.getElementById('databaseSearchInput').value.trim();
+            const params = new URLSearchParams({ page: String(page), page_size: '100', search });
+            setDatabaseTableMessage('Loading company patterns...');
+
+            fetch(`/database-entries?${params}`)
+                .then(async response => {
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error || 'Could not load database entries');
+                    return data;
+                })
+                .then(data => {
+                    databasePage = data.page;
+                    document.getElementById('databasePaginationInfo').textContent =
+                        `${Number(data.total).toLocaleString()} companies | Page ${data.page.toLocaleString()} of ${data.total_pages.toLocaleString()}`;
+                    document.getElementById('databasePreviousPage').disabled = data.page <= 1;
+                    document.getElementById('databaseNextPage').disabled = data.page >= data.total_pages || data.total === 0;
+                    body.replaceChildren();
+
+                    if (data.items.length === 0) {
+                        setDatabaseTableMessage('No matching companies found.');
+                        return;
+                    }
+
+                    data.items.forEach(item => {
+                        const row = document.createElement('tr');
+                        const companyCell = document.createElement('td');
+                        const patternCell = document.createElement('td');
+                        companyCell.textContent = item.company;
+                        patternCell.className = 'email-pattern-cell';
+                        patternCell.textContent = item.email_pattern;
+                        row.append(companyCell, patternCell);
+                        body.appendChild(row);
+                    });
+                })
+                .catch(error => {
+                    document.getElementById('databasePaginationInfo').textContent = '';
+                    document.getElementById('databasePreviousPage').disabled = true;
+                    document.getElementById('databaseNextPage').disabled = true;
+                    setDatabaseTableMessage(error.message, 'text-danger');
+                });
+        }
 
 
         function loadFileList(path) {

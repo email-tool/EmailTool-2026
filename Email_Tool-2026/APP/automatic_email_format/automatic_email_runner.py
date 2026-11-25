@@ -21,10 +21,6 @@ load_dotenv()
 API_KEY = os.getenv("SERPER_API_KEY")
 LOG_FILE = os.getenv("LOG_FILE", "serper_email_discovery.log")
 
-if not API_KEY:
-    raise ValueError("SERPER_API_KEY not set")
-
-
 LOG_FILE = "serper_email_discovery.log"
 
 def log(message):
@@ -35,6 +31,10 @@ def log(message):
         f.write(line + "\n")
 
 def serper_search(query, num_results=10):
+    if not API_KEY:
+        log("SERPER_API_KEY not set; skipping Serper search")
+        return None
+
     log(f"SEARCHING: {query}")
     url = "https://google.serper.dev/search"
     payload = json.dumps({

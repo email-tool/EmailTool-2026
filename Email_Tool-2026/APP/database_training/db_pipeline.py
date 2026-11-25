@@ -508,7 +508,7 @@ def process_single_file(
             f"valid patterns found: {status['rows_extracted']:,} | "
             f"ignored/invalid: {pkl_result.get('invalid_rows', 0):,} | "
             f"new companies: {pkl_result.get('new', 0):,} | "
-            f"updated companies: {pkl_result.get('updated', 0):,} | "
+            f"existing company patterns updated: {pkl_result.get('updated', 0):,} | "
             f"unchanged companies: {pkl_result.get('unchanged', 0):,} | "
             f"final DB total: {pkl_result.get('total', 0):,}"
         )
@@ -779,7 +779,7 @@ def update_pickle(pkl_path: str | Path, csv_path: str | Path, emit_fn=None) -> d
     summary_msg = (
         f"PKL update summary | rows seen: {rows_seen:,} | valid rows: {len(new_entries):,} | "
         f"ignored/invalid: {invalid_rows:,} | new companies: {truly_new:,} | "
-        f"updated companies: {replaced:,} | unchanged companies: {unchanged:,} | "
+        f"existing company patterns updated: {replaced:,} | unchanged companies: {unchanged:,} | "
         f"final DB total: {len(db):,}"
     )
     logger.info(summary_msg)

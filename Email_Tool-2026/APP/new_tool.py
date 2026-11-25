@@ -21,6 +21,13 @@ from automatic_email_format.process_scrapped_data import process_run
 from automatic_email_format.automatic_email_runner import run_automatic_email
 from database_training.update_db_manually import update_pickle
 from database_training.db_pipeline import process_single_file, process_folder
+from database_training.db_view_index import (
+    ensure_database_history_baseline,
+    get_database_count,
+    get_database_history,
+    get_database_page,
+    record_database_snapshot,
+)
 from email_creation.create_emails import email_creator_app
 
 app = Flask(__name__)
@@ -89,43 +96,48 @@ create_pickle_if_missing(new_db_pickle_file_path, new_data)
 create_pickle_if_missing(old_db_pickle_file_path, new_data)
 
 # ===================================================================
-# Database Count
-# ===================================================================
-@app.route('/database-counts')
-
-# ===================================================================
-# In-memory cache for DB count (GLOBAL)
-# ===================================================================
-
-
-# ===================================================================
 # Database Count (MAIN ONLY)
 # ===================================================================
 @app.route('/database-counts')
 def database_count():
-    _db_count_cache = {
-    "main": {"count": None, "mtime": None}
-}
     try:
-        main_mtime = os.path.getmtime(new_db_pickle_file_path)
-
-        # Reload only if file changed
-        if _db_count_cache["main"]["mtime"] != main_mtime:
-            with open(new_db_pickle_file_path, 'rb') as f:
-                db = pickle.load(f)
-
-            _db_count_cache["main"] = {
-                "count": len(db),
-                "mtime": main_mtime
-            }
-
-        return jsonify({
-
-            "main_db": f"New DB {_db_count_cache["main"]["count"]}" 
-            # "main_db": _db_count_cache["main"]["count"]
-        })
-
+        count = get_database_count(new_db_pickle_file_path)
+        return jsonify({"main_db": f"New DB {count:,}", "total": count})
     except Exception as e:
+        logger.exception("Could not read new database count")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/database-entries')
+def database_entries():
+    try:
+        page = int(request.args.get("page", 1))
+        page_size = int(request.args.get("page_size", 100))
+    except ValueError:
+        return jsonify({"error": "Page and page size must be integers"}), 400
+
+    try:
+        result = get_database_page(
+            new_db_pickle_file_path,
+            page=page,
+            page_size=page_size,
+            search=request.args.get("search", ""),
+        )
+        return jsonify(result)
+    except Exception as e:
+        logger.exception("Could not read new database entries")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/database-count-history')
+def database_count_history():
+    try:
+        limit = int(request.args.get("limit", 12))
+        return jsonify(get_database_history(new_db_pickle_file_path, limit=limit))
+    except ValueError:
+        return jsonify({"error": "History limit must be an integer"}), 400
+    except Exception as e:
+        logger.exception("Could not read new database count history")
         return jsonify({"error": str(e)}), 500
 
 
@@ -237,6 +249,7 @@ def train_database():
         file.save(file_path)
         logger.info("[train-database] Single file received: %s", safe_name)
 
+        ensure_database_history_baseline(new_db_pickle_file_path)
         status = process_single_file(
             file_path, output_files_path_new, new_db_pickle_file_path,
             emit_fn=emit_train_log
@@ -245,6 +258,7 @@ def train_database():
         if status["error"]:
             return jsonify({"error": status["error"]}), 400
 
+        record_database_snapshot(new_db_pickle_file_path, "train upload", safe_name)
         return jsonify({
             "log": (
                 f"Done! {status['rows_extracted']} patterns extracted — "
@@ -271,10 +285,17 @@ def train_database():
         return jsonify({"error": "No supported files found in the folder upload (.csv / .xls / .xlsx)"}), 400
 
     logger.info("[train-database] Folder upload: %d files received", len(saved_files))
+    ensure_database_history_baseline(new_db_pickle_file_path)
     summary = process_folder(
         folder_upload_dir, output_files_path_new, new_db_pickle_file_path,
         emit_fn=emit_train_log
     )
+    if summary["processed"]:
+        record_database_snapshot(
+            new_db_pickle_file_path,
+            "folder train upload",
+            ", ".join(summary["processed"]),
+        )
 
     failed_msg  = f" | Failed: {', '.join(summary['failed'])}" if summary["failed"] else ""
     skipped_msg = f" | Skipped (already done): {len(summary['skipped'])}" if summary["skipped"] else ""
@@ -307,7 +328,9 @@ def upload_file():
         file.save(file_path)
         print(f"File saved at: {file_path}")
         try:
+            ensure_database_history_baseline(new_db_pickle_file_path)
             process_single_file(file_path, Output_files_path_new, new_db_pickle_file_path)
+            record_database_snapshot(new_db_pickle_file_path, "legacy upload", os.path.basename(file_path))
             log_message = "File processed successfully!"
         except Exception as e:
             log_message = f"New tool Error processing file: {str(e)}"
@@ -320,7 +343,9 @@ def upload_file():
                 file_path = os.path.join(base_path, os.path.basename(uploaded_file.filename))
                 uploaded_file.save(file_path)
                 try:
+                    ensure_database_history_baseline(new_db_pickle_file_path)
                     process_single_file(file_path, Output_files_path_new, new_db_pickle_file_path)
+                    record_database_snapshot(new_db_pickle_file_path, "legacy folder upload", os.path.basename(file_path))
                     log_message = "Files processed successfully!"
                 except Exception as e:
                     log_message += f" | Error on {uploaded_file.filename}: {str(e)}"
@@ -339,8 +364,12 @@ def update_file():
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
         file.save(file_path)
         try:
+            ensure_database_history_baseline(new_db_pickle_file_path)
+            ensure_database_history_baseline(old_db_pickle_file_path)
             updated_dictd = update_pickle(new_db_pickle_file_path, file_path)
             update_pickle(old_db_pickle_file_path, file_path)
+            record_database_snapshot(new_db_pickle_file_path, "manual update", os.path.basename(file_path))
+            record_database_snapshot(old_db_pickle_file_path, "manual update", os.path.basename(file_path))
             log_message = "Database updated successfully!"
         except Exception as e:
             log_message = f"Error: {str(e)}"
@@ -490,8 +519,12 @@ def automatic_email():
             output_dir=scrapper_output,
             socketio=socketio, max_companies=None
         )
+        ensure_database_history_baseline(new_db_pickle_file_path)
+        ensure_database_history_baseline(old_db_pickle_file_path)
         d  = update_db_manually.update_pickle(new_db_pickle_file_path, output_file)
         d  = update_db_manually.update_pickle(old_db_pickle_file_path, output_file)
+        record_database_snapshot(new_db_pickle_file_path, "automatic discovery", os.path.basename(output_file))
+        record_database_snapshot(old_db_pickle_file_path, "automatic discovery", os.path.basename(output_file))
         return jsonify({"log": f"Discovery completed. Output: {os.path.basename(output_file)}"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
